@@ -1,0 +1,10 @@
+stages:
+  - build
+
+build-mcp-server:
+  stage: build
+  image: python:3.12
+  script:
+    - python -m pip install --upgrade pip
+    - python -m pip install --index-url https://pypi.org/simple -r requirements.txt
+    - python -c "import fastmcp"
