@@ -1,10 +1,148 @@
+services:
+  - name: docker:27-dind
+    alias: docker
+
+variables:
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+
 stages:
   - build
+  - test
+  - integration
+  - prod
 
-build-mcp-server:
+
+# ============================================================
+# BUILD
+# ============================================================
+
+build:
   stage: build
-  image: python:3.12
+  image: python:3.11
   script:
-    - python -m pip install --upgrade pip
-    - python -m pip install --index-url https://pypi.org/simple -r requirements.txt
-    - python -c "import fastmcp"
+    - pip install -r requirements.txt
+    - python -c "import mcp; print('mcp library imported ok')"
+    - pip freeze > build-dependencies.txt
+  artifacts:
+    paths:
+      - build-dependencies.txt
+    when: always
+    expire_in: 7 days
+
+
+# ============================================================
+# BANDIT SAST SCAN
+# ============================================================
+
+sast-bandit:
+  stage: test
+  image: docker:27-cli
+  script:
+    - echo "Running Bandit SAST Scan..."
+    - docker info
+    - docker pull hysnsec/bandit
+    - docker run --rm -v $(pwd):/src hysnsec/bandit -r /src -x /src/tests -f json -o /src/bandit-output.json
+  artifacts:
+    paths:
+      - bandit-output.json
+    when: always
+    expire_in: 7 days
+  allow_failure: true
+
+
+# ============================================================
+# SEMGREP SAST SCAN
+# ============================================================
+
+sast-semgrep:
+  stage: test
+  image: docker:27-cli
+  script:
+    - echo "Running Semgrep SAST Scan..."
+    - docker info
+    - docker pull returntocorp/semgrep:1.92.0
+    - docker run --rm -v $(pwd):/src -w /src returntocorp/semgrep:1.92.0 semgrep --config p/python --config p/security-audit --error --json --output /src/semgrep-output.json /src
+  artifacts:
+    paths:
+      - semgrep-output.json
+    when: always
+    expire_in: 7 days
+  allow_failure: true
+
+
+# ============================================================
+# GITLEAKS SECRET SCAN
+# ============================================================
+
+secrets-gitleaks:
+  stage: test
+  image: docker:27-cli
+  script:
+    - echo "Running Gitleaks Secret Scan..."
+    - docker info
+    - docker pull zricethezav/gitleaks:v8.30.1
+    - docker run --rm -v $(pwd):/src zricethezav/gitleaks:v8.30.1 detect --source /src --report-format sarif --report-path /src/gitleaks-output.sarif --exit-code 1
+  artifacts:
+    paths:
+      - gitleaks-output.sarif
+    when: always
+    expire_in: 7 days
+  allow_failure: true
+
+
+# ============================================================
+# MCP SECURITY SCANNER
+# ============================================================
+
+mcp-scanner:
+  stage: test
+  image: python:3.11
+  before_script:
+    - pip install -r requirements.txt
+    - pip install cisco-ai-mcp-scanner==4.6.0 mcp==1.29.1
+  script:
+    - echo "Running Cisco AI MCP Security Scanner..."
+    - export MCP_SCANNER_STDIO_TIMEOUT=180
+    - mcp-scanner --log-level error --analyzers yara --format raw stdio --stdio-command mcp --stdio-arg run --stdio-arg challenges/challenge2/server_http.py:mcp | tee mcp-scan-output.json
+    - 'if grep -qiE "\"is_safe\"[[:space:]]*:[[:space:]]*false" mcp-scan-output.json; then echo "MCP findings detected"; exit 1; fi'
+  artifacts:
+    paths:
+      - mcp-scan-output.json
+    when: always
+    expire_in: 7 days
+  allow_failure: true
+
+
+# ============================================================
+# INTEGRATION
+# ============================================================
+
+integration:
+  stage: integration
+  image: alpine:latest
+  script:
+    - echo "This is an integration step." | tee integration-output.txt
+  artifacts:
+    paths:
+      - integration-output.txt
+    when: always
+    expire_in: 7 days
+  allow_failure: true
+
+
+# ============================================================
+# PRODUCTION
+# ============================================================
+
+prod:
+  stage: prod
+  image: alpine:latest
+  script:
+    - echo "This is a deploy step." | tee prod-output.txt
+  artifacts:
+    paths:
+      - prod-output.txt
+    when: always
+    expire_in: 7 days
+  when: manual

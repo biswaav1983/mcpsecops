@@ -1,456 +1,786 @@
-# Compromised Third-Party Package Attack Lab
+# MCP DevSecOps CI/CD Security Pipeline
 
-## Overview
+This project demonstrates a **DevSecOps CI/CD pipeline for an MCP (Model Context Protocol) application** using GitLab CI/CD.
 
-This lab demonstrates a **software supply-chain attack** in which a compromised third-party Python package is introduced into an MCP application's CI/CD pipeline.
+The pipeline integrates multiple security controls into the software delivery lifecycle, including:
 
-For this exercise, a **lab-created malicious version of `fastmcp`** is hosted on a local/internal PyPI server.
+- Python dependency validation
+- Bandit SAST scanning
+- Semgrep SAST scanning
+- Gitleaks secret detection
+- Cisco AI MCP Security Scanner
+- Integration stage
+- Manual production deployment
+- Security scan artifact collection
 
-The objective is to demonstrate how insecure dependency resolution can allow an unintended package to enter a CI/CD build.
-
-> ⚠️ **LAB USE ONLY**
->
-> The malicious package used in this exercise must remain inside an isolated and authorized training environment.
->
-> **Never upload the exercise package to public PyPI or publish it using a typosquatted package name.**
+The pipeline uses a **GitLab Docker Runner** with **Docker-in-Docker (DinD)** for container-based security scanning.
 
 ---
 
-## Attack Scenario
+# Pipeline Architecture
 
-An MCP application may automatically install Python dependencies when its CI/CD pipeline executes.
-
-For example:
+The pipeline follows the following workflow:
 
 ```text
-Developer
-    |
-    v
-Git Repository
-    |
-    v
-CI/CD Pipeline
-    |
-    v
-pip install
-    |
-    +-------------------------+
-    |                         |
-    v                         v
-Public PyPI              Internal PyPI
-Legitimate fastmcp       Exercise fastmcp
-```
-
-If package sources, versions, and integrity controls are not properly configured, the pipeline may install an unintended version of a dependency.
-
-This lab demonstrates that risk using `fastmcp`.
-
----
-
-# 1. Prerequisites
-
-The following components are required:
-
-- Linux/Ubuntu lab environment
-- Python 3
-- pip
-- Twine
-- Internal PyPI server
-- GitLab or another CI/CD platform
-- GitLab Runner or equivalent build agent
-- MCP test application
-
-The PyPI server should be accessible only from the lab environment.
-
-Example internal repository:
-
-```text
-http://192.168.40.147:5001
+                     GitLab Repository
+                            |
+                            v
+                     +-------------+
+                     |    BUILD    |
+                     +------+------+
+                            |
+                            v
+        +-------------------------------------------+
+        |               TEST STAGE                  |
+        |                                           |
+        |  +---------+ +---------+ +-------------+ |
+        |  | Bandit  | | Semgrep | |  Gitleaks   | |
+        |  +---------+ +---------+ +-------------+ |
+        |                                           |
+        |          +---------------------+          |
+        |          | MCP Security Scanner|          |
+        |          +---------------------+          |
+        +-------------------+-----------------------+
+                            |
+                            v
+                    +---------------+
+                    |  INTEGRATION  |
+                    +-------+-------+
+                            |
+                            v
+                    +---------------+
+                    |  PRODUCTION   |
+                    |    Manual     |
+                    +---------------+
 ```
 
 ---
 
-# 2. Compromised Third-Party Package
+# Pipeline Stages
 
-For this exercise, we use a specially created **training version of `fastmcp`**.
+The GitLab pipeline contains the following stages:
 
-The package exists only for demonstrating the risks associated with:
-
-- Dependency confusion
-- Package poisoning
-- Compromised dependencies
-- Uncontrolled package indexes
-- Unpinned dependencies
-- Missing integrity validation
-
-The exercise package should be stored in:
-
-```text
-/malicious-fastmcp-build
+```yaml
+stages:
+  - build
+  - test
+  - integration
+  - prod
 ```
 
-Example:
-
-```bash
-cd /malicious-fastmcp-build
-```
-
-After building the package, the Python distribution artifacts should be available under:
-
-```text
-dist/
-```
-
-For example:
-
-```text
-dist/
-├── fastmcp-999.0.0-py3-none-any.whl
-└── fastmcp-999.0.0.tar.gz
-```
-
----
-
-# 3. Uploading to the Internal PyPI Index
-
-An internal PyPI server must already be installed and running.
-
-Upload the exercise package using **Twine**.
-
-Navigate to the package directory:
-
-```bash
-cd /malicious-fastmcp-build
-```
-
-Upload the package:
-
-```bash
-python3 -m twine upload \
-  --repository-url http://192.168.40.147:5001 \
-  dist/*
-```
-
-Depending on the PyPI server configuration, Twine may request authentication credentials.
-
-After uploading, verify that the package exists on the internal repository.
-
----
-
-# 4. Poisoned Pipeline Attack Against an MCP Deployment
-
-When a CI/CD pipeline builds an MCP deployment, it commonly installs Python dependencies automatically using `pip`.
-
-Conceptually:
-
-```text
-Git Push
-   |
-   v
-GitLab Repository
-   |
-   v
-GitLab Pipeline
-   |
-   v
-GitLab Runner
-   |
-   v
-pip install
-   |
-   v
-Python Dependencies
-   |
-   v
-MCP Application
-```
-
-If dependency resolution is configured insecurely, an unintended package source may influence which artifact is installed.
-
-For example:
-
-```text
-Internal PyPI
-Exercise fastmcp
-      |
-      v
-Dependency Resolution
-      |
-      v
-CI/CD Runner
-      |
-      v
-Package Installed
-      |
-      v
-MCP Build
-      |
-      v
-Deployment
-```
-
-This demonstrates why package installation should be treated as a **software supply-chain security boundary**.
-
----
-
-# 5. Legitimate Project Versus Exercise Build
-
-It is important to distinguish between the legitimate `fastmcp` project and the package created for this exercise.
-
-| Package | Repository | Purpose |
-|---|---|---|
-| Legitimate `fastmcp` | Public PyPI | Normal application development |
-| Exercise `fastmcp` | Internal lab PyPI | Security training only |
-
-## Legitimate `fastmcp`
-
-The real `fastmcp` package available through public PyPI is maintained by its project authors and is appropriate for normal development.
-
-## Exercise Build
-
-The malicious/training version of `fastmcp` exists **only on the lab-scoped internal package index**.
-
-It is designed exclusively to demonstrate software supply-chain risks.
-
-The exercise package must never be confused with or represented as the legitimate project.
-
----
-
-# 6. Why the Attack Works
-
-The lab demonstrates several dependency-management weaknesses.
-
-```text
-Uncontrolled Package Source
-            +
-Unpinned Dependency
-            +
-Missing Integrity Validation
-            |
-            v
-   Dependency Resolution
-            |
-            v
-      CI/CD Pipeline
-            |
-            v
-      MCP Deployment
-```
-
-An insecure pipeline may trust a package based primarily on:
-
-```text
-Package Name
-     +
-Version Requirement
-     +
-Available Repository
-```
-
-This can create an opportunity for an unintended package to enter the build process.
-
----
-
-# 7. Security Impact
-
-A compromised dependency can potentially affect the confidentiality, integrity, and availability of the CI/CD environment.
-
-Depending on the permissions granted to the build runner, the risk may extend to:
-
-- Application source code
-- CI/CD variables
-- Build artifacts
-- Deployment credentials
-- API tokens
-- Container registries
-- Cloud credentials
-- MCP configuration
-- Production infrastructure
-
-For this reason, CI/CD runners should always follow the principle of **least privilege**.
-
----
-
-# 8. Recommended Defensive Controls
-
-Organizations should implement multiple layers of software supply-chain protection.
-
-### Pin Dependency Versions
-
-Avoid uncontrolled dependency versions.
-
-Dependencies should be explicitly reviewed and pinned according to the organization's dependency-management policy.
-
----
-
-### Control Package Sources
-
-CI/CD pipelines should use explicitly approved package repositories.
-
-Avoid configurations that allow arbitrary or untrusted package indexes to participate in dependency resolution.
-
-A preferred architecture is:
-
-```text
-CI/CD Pipeline
-      |
-      v
-Approved Internal Repository
-      |
-      v
-Reviewed Dependencies
-      |
-      v
-Application Build
-```
-
----
-
-### Verify Package Integrity
-
-Where supported, use cryptographic hashes or equivalent integrity controls to verify that downloaded packages match reviewed artifacts.
-
----
-
-### Generate an SBOM
-
-Generate a **Software Bill of Materials (SBOM)** for application builds.
-
-The SBOM provides visibility into the software components included in the final deployment.
-
----
-
-### Sign and Verify Artifacts
-
-Where possible, implement:
+The overall pipeline flow is:
 
 ```text
 Build
   |
   v
-Generate SBOM
+Security Testing
+  |
+  +-- Bandit
+  |
+  +-- Semgrep
+  |
+  +-- Gitleaks
+  |
+  +-- Cisco AI MCP Scanner
   |
   v
-Create Attestation
+Integration
   |
   v
-Sign Artifact
-  |
-  v
-Verify Signature
-  |
-  v
-Deploy
+Production
 ```
 
-This provides additional assurance that artifacts have not been unexpectedly modified.
-
 ---
 
-### Scan Dependencies
+# 1. Build Stage
 
-Integrate Software Composition Analysis and dependency scanning into the CI/CD pipeline.
-
-Security controls can include:
-
-- Dependency vulnerability scanning
-- SCA scanning
-- SBOM generation
-- Package provenance validation
-- Artifact signing
-- Attestation verification
-- CI/CD policy enforcement
-
----
-
-# 9. Learning Objectives
-
-After completing this exercise, participants should understand:
-
-1. How Python dependencies enter an MCP application.
-2. How package repositories influence dependency resolution.
-3. Why third-party packages represent a software supply-chain risk.
-4. How compromised packages can affect CI/CD environments.
-5. Why dependency versions should be controlled.
-6. Why package sources should be explicitly configured.
-7. Why CI/CD runners should use least privilege.
-8. How SBOMs improve dependency visibility.
-9. How signing and attestations strengthen software supply-chain security.
-10. How internal artifact repositories can reduce dependency-related risk.
-
----
-
-# 10. Cleanup
-
-After completing the exercise:
-
-1. Remove the malicious/training package from the internal PyPI repository.
-2. Restore the MCP project's legitimate dependency configuration.
-3. Remove temporary CI/CD credentials used by the lab.
-4. Remove generated training artifacts.
-5. Confirm that the pipeline uses only approved package sources.
-6. Re-run the pipeline and verify that only legitimate dependencies are installed.
-
-The desired secure architecture should resemble:
+The build stage uses:
 
 ```text
-Developer
-    |
-    v
-Source Repository
-    |
-    v
-CI/CD Pipeline
-    |
-    v
-Approved Internal Package Repository
-    |
-    v
-Pinned + Verified Dependencies
-    |
-    v
-Security Scanning
-    |
-    v
-SBOM + Attestation
-    |
-    v
-Artifact Verification
-    |
-    v
-MCP Deployment
+python:3.11
+```
+
+The job installs the project dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+It then verifies that the MCP library can be imported successfully:
+
+```bash
+python -c "import mcp; print('mcp library imported ok')"
+```
+
+Finally, all installed Python packages and versions are recorded:
+
+```bash
+pip freeze > build-dependencies.txt
+```
+
+## Build Artifact
+
+The following artifact is generated:
+
+```text
+build-dependencies.txt
+```
+
+This provides a snapshot of the Python dependencies installed during the pipeline build.
+
+Artifact retention:
+
+```text
+7 days
 ```
 
 ---
 
-# ⚠️ Important Safety Notice
+# 2. Bandit SAST Scan
 
-This repository and the malicious `fastmcp` package are intended **only for authorized cybersecurity and DevSecOps training**.
+Bandit is used to perform **Static Application Security Testing (SAST)** against the Python source code.
 
-### DO NOT
+The pipeline uses:
 
-- Upload the malicious package to public PyPI.
-- Publish it to another public package repository.
-- Use a typosquatted package name.
-- Distribute it as the legitimate `fastmcp` project.
-- Deploy the package into production.
-- Test it against systems without authorization.
-- Use the exercise to target third-party CI/CD environments.
+```text
+hysnsec/bandit
+```
 
-### DO
+The scanner executes:
 
-- Keep the package inside the isolated lab.
-- Use a private/internal PyPI server.
-- Restrict access to the training environment.
-- Remove the package after completing the exercise.
-- Use the exercise to understand and improve software supply-chain security.
+```bash
+bandit -r /src \
+  -x /src/tests \
+  -f json \
+  -o /src/bandit-output.json
+```
+
+The scan recursively examines the project while excluding the test directory.
+
+## Bandit Artifact
+
+```text
+bandit-output.json
+```
+
+The report is generated in JSON format and retained for:
+
+```text
+7 days
+```
+
+The job is configured with:
+
+```yaml
+allow_failure: true
+```
+
+Therefore, security findings do not stop the remaining pipeline stages.
 
 ---
 
-## Disclaimer
+# 3. Semgrep SAST Scan
 
-This project is intended solely for:
+Semgrep performs additional **static security analysis**.
 
-**Cybersecurity Training • DevSecOps Education • MCP Security Testing • Software Supply-Chain Security Research**
+The pipeline uses:
 
-All demonstrations must be performed within an isolated environment that you own or are explicitly authorized to test.
+```text
+returntocorp/semgrep:1.92.0
+```
+
+The following Semgrep rule sets are enabled:
+
+```text
+p/python
+p/security-audit
+```
+
+The scanner executes:
+
+```bash
+semgrep \
+  --config p/python \
+  --config p/security-audit \
+  --error \
+  --json \
+  --output /src/semgrep-output.json \
+  /src
+```
+
+## Semgrep Artifact
+
+The scan generates:
+
+```text
+semgrep-output.json
+```
+
+The artifact is retained for:
+
+```text
+7 days
+```
+
+The job is configured as:
+
+```yaml
+allow_failure: true
+```
+
+This allows the pipeline to continue while still preserving security findings for analysis.
+
+---
+
+# 4. Gitleaks Secret Detection
+
+Gitleaks searches the repository for accidentally committed secrets and sensitive information.
+
+Examples include:
+
+- API keys
+- Authentication tokens
+- Passwords
+- Private keys
+- Cloud credentials
+- Database credentials
+- Other secret patterns
+
+The pipeline uses:
+
+```text
+zricethezav/gitleaks:v8.30.1
+```
+
+The scanner executes:
+
+```bash
+gitleaks detect \
+  --source /src \
+  --report-format sarif \
+  --report-path /src/gitleaks-output.sarif \
+  --exit-code 1
+```
+
+## Gitleaks Artifact
+
+The generated report is:
+
+```text
+gitleaks-output.sarif
+```
+
+The report uses the **SARIF (Static Analysis Results Interchange Format)** format.
+
+Artifact retention:
+
+```text
+7 days
+```
+
+The job uses:
+
+```yaml
+allow_failure: true
+```
+
+so secret findings can be reviewed without automatically terminating the complete pipeline.
+
+---
+
+# 5. Cisco AI MCP Security Scanner
+
+The pipeline includes security testing specifically for the **Model Context Protocol (MCP)** application.
+
+The scanner is installed using:
+
+```bash
+pip install cisco-ai-mcp-scanner==4.6.0 mcp==1.29.1
+```
+
+The scanner is configured with:
+
+```bash
+export MCP_SCANNER_STDIO_TIMEOUT=180
+```
+
+The MCP server is launched using:
+
+```text
+mcp run challenges/challenge2/server_http.py:mcp
+```
+
+The security scan executes:
+
+```bash
+mcp-scanner \
+  --log-level error \
+  --analyzers yara \
+  --format raw \
+  stdio \
+  --stdio-command mcp \
+  --stdio-arg run \
+  --stdio-arg challenges/challenge2/server_http.py:mcp
+```
+
+The output is captured using:
+
+```bash
+tee mcp-scan-output.json
+```
+
+The pipeline then searches the scanner output for:
+
+```json
+"is_safe": false
+```
+
+If this value is detected, the job reports:
+
+```text
+MCP findings detected
+```
+
+and exits with a non-zero status.
+
+Because the job has:
+
+```yaml
+allow_failure: true
+```
+
+the finding is reported without blocking subsequent pipeline stages.
+
+## MCP Scanner Artifact
+
+```text
+mcp-scan-output.json
+```
+
+Artifact retention:
+
+```text
+7 days
+```
+
+---
+
+# 6. Integration Stage
+
+After security testing, the pipeline executes the integration stage.
+
+Currently, this is a demonstration step:
+
+```bash
+echo "This is an integration step." | tee integration-output.txt
+```
+
+## Integration Artifact
+
+```text
+integration-output.txt
+```
+
+The artifact is retained for:
+
+```text
+7 days
+```
+
+This stage can later be expanded to include:
+
+- API integration testing
+- MCP client/server testing
+- Functional testing
+- End-to-end testing
+- Authentication testing
+- Authorization testing
+
+---
+
+# 7. Production Stage
+
+The final stage represents deployment to production.
+
+The current demonstration command is:
+
+```bash
+echo "This is a deploy step." | tee prod-output.txt
+```
+
+## Manual Deployment
+
+Production is configured with:
+
+```yaml
+when: manual
+```
+
+Therefore, production deployment does not execute automatically.
+
+An authorized user must manually trigger the production job from the GitLab pipeline interface.
+
+## Production Artifact
+
+```text
+prod-output.txt
+```
+
+The artifact is retained for:
+
+```text
+7 days
+```
+
+---
+
+# Docker-in-Docker Architecture
+
+The pipeline uses Docker-in-Docker for container-based security scanners.
+
+The configuration is:
+
+```yaml
+services:
+  - name: docker:27-dind
+    alias: docker
+
+variables:
+  DOCKER_HOST: "tcp://docker:2375"
+  DOCKER_TLS_CERTDIR: ""
+```
+
+The security scanner jobs use:
+
+```text
+docker:27-cli
+```
+
+as their job image.
+
+The architecture is:
+
+```text
+GitLab Runner
+      |
+      v
++-----------------------+
+| docker:27-cli         |
+|                       |
+| docker pull           |
+| docker run            |
++----------+------------+
+           |
+           | TCP 2375
+           v
++-----------------------+
+| docker:27-dind        |
+|                       |
+| Docker Daemon         |
++----------+------------+
+           |
+           +------------------+
+           |        |         |
+           v        v         v
+        Bandit   Semgrep   Gitleaks
+```
+
+---
+
+# GitLab Runner Requirements
+
+The pipeline requires a GitLab Runner using the Docker executor.
+
+Example runner configuration:
+
+```toml
+[[runners]]
+  name = "local-docker-runner"
+  executor = "docker"
+
+  [runners.docker]
+    tls_verify = false
+    image = "docker:27-cli"
+    privileged = true
+    disable_entrypoint_overwrite = false
+    oom_kill_disable = false
+    disable_cache = false
+    volumes = ["/cache"]
+    shm_size = 0
+```
+
+The following setting is important for conventional Docker-in-Docker operation:
+
+```toml
+privileged = true
+```
+
+Restart GitLab Runner after modifying its configuration:
+
+```bash
+sudo systemctl restart gitlab-runner
+```
+
+Verify the runner:
+
+```bash
+sudo gitlab-runner verify
+```
+
+---
+
+# Pipeline Artifacts
+
+Each pipeline execution generates security and operational artifacts.
+
+| Pipeline Job | Artifact | Format |
+|---|---|---|
+| Build | `build-dependencies.txt` | Text |
+| Bandit | `bandit-output.json` | JSON |
+| Semgrep | `semgrep-output.json` | JSON |
+| Gitleaks | `gitleaks-output.sarif` | SARIF |
+| MCP Scanner | `mcp-scan-output.json` | JSON/Raw |
+| Integration | `integration-output.txt` | Text |
+| Production | `prod-output.txt` | Text |
+
+All artifacts are retained for:
+
+```text
+7 days
+```
+
+Artifacts can be downloaded from the corresponding GitLab pipeline job.
+
+---
+
+# Security Pipeline Summary
+
+| Security Control | Tool | Purpose |
+|---|---|---|
+| Dependency Validation | pip | Validate application dependencies |
+| SAST | Bandit | Detect Python security weaknesses |
+| SAST | Semgrep | Detect insecure code patterns |
+| Secret Detection | Gitleaks | Detect exposed credentials and secrets |
+| MCP Security | Cisco AI MCP Scanner | Analyze MCP server security |
+| Security Evidence | GitLab Artifacts | Preserve scanner results |
+
+---
+
+# Security Findings and Pipeline Behavior
+
+The security scanning jobs use:
+
+```yaml
+allow_failure: true
+```
+
+This is intentional for a security demonstration or training environment.
+
+It allows the pipeline to:
+
+```text
+Build
+   |
+   v
+Security Scan
+   |
+   +---- Findings detected
+   |
+   +---- Report uploaded
+   |
+   v
+Pipeline continues
+```
+
+For a production DevSecOps implementation, security gates can be introduced so that findings above an approved severity level prevent deployment.
+
+---
+
+# Running the Pipeline
+
+Clone the repository:
+
+```bash
+git clone <repository-url>
+```
+
+Enter the project directory:
+
+```bash
+cd mcpdevsecops
+```
+
+After modifying the project or pipeline:
+
+```bash
+git add .
+git commit -m "Update DevSecOps security pipeline"
+git push origin main
+```
+
+The GitLab pipeline should start automatically after the push.
+
+Pipeline execution can be monitored from:
+
+```text
+GitLab
+  -> Project
+  -> Build
+  -> Pipelines
+```
+
+---
+
+# Expected Pipeline Flow
+
+A successful pipeline should show approximately:
+
+```text
+build                    PASSED
+
+sast-bandit              PASSED / ALLOWED FAILURE
+sast-semgrep             PASSED / ALLOWED FAILURE
+secrets-gitleaks         PASSED / ALLOWED FAILURE
+mcp-scanner              PASSED / ALLOWED FAILURE
+
+integration              PASSED
+
+prod                     MANUAL
+```
+
+The production stage remains pending until manually triggered.
+
+---
+
+# Troubleshooting
+
+## `docker: not found`
+
+If the pipeline reports:
+
+```text
+/bin/sh: docker: not found
+```
+
+verify that Docker-based jobs use:
+
+```yaml
+image: docker:27-cli
+```
+
+---
+
+## Cannot Connect to Docker Daemon
+
+If the pipeline reports that it cannot connect to Docker, verify:
+
+```yaml
+DOCKER_HOST: "tcp://docker:2375"
+DOCKER_TLS_CERTDIR: ""
+```
+
+Also verify that the GitLab Runner is configured with:
+
+```toml
+privileged = true
+```
+
+---
+
+## Artifact Not Found
+
+An error similar to:
+
+```text
+WARNING: bandit-output.json: no matching files
+ERROR: No files to upload
+```
+
+usually means the scanner failed before generating its report.
+
+Check the scanner output earlier in the GitLab job log.
+
+---
+
+## Docker Connectivity Test
+
+For troubleshooting Docker-in-Docker, add:
+
+```bash
+docker info
+```
+
+before:
+
+```bash
+docker pull
+```
+
+For example:
+
+```yaml
+script:
+  - docker info
+  - docker pull hysnsec/bandit
+```
+
+If `docker info` succeeds, the Docker CLI can communicate with the DinD Docker daemon.
+
+---
+
+# Important Security Considerations
+
+This pipeline is suitable for **DevSecOps training, MCP security experimentation, and controlled lab environments**.
+
+For production environments, consider additional controls such as:
+
+- Pinning container images by digest
+- Dependency vulnerability scanning
+- Software Bill of Materials (SBOM) generation
+- Container image scanning
+- Signed artifacts
+- Build provenance/attestation
+- Protected production environments
+- Branch protection
+- Security approval gates
+- Least-privilege runners
+- Secure handling of CI/CD secrets
+
+Never commit credentials, GitLab runner tokens, API keys, passwords, or private keys to the repository.
+
+---
+
+# Purpose
+
+The primary purpose of this project is to demonstrate how traditional application security controls and AI/MCP-specific security testing can be incorporated into a GitLab CI/CD workflow.
+
+The pipeline demonstrates a practical **DevSecOps security testing lifecycle**:
+
+```text
+CODE
+ |
+ v
+BUILD
+ |
+ v
+SAST
+ |---- Bandit
+ |---- Semgrep
+ |
+ v
+SECRET SCANNING
+ |---- Gitleaks
+ |
+ v
+AI / MCP SECURITY
+ |---- Cisco AI MCP Scanner
+ |
+ v
+INTEGRATION
+ |
+ v
+MANUAL PRODUCTION DEPLOYMENT
+```
+
+This provides multiple security checkpoints before an application reaches the production stage.

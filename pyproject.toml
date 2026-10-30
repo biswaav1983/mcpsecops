@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "insecure-mcp"
+version = "0.1.0"
+description = "Insecure MCP - A FastAPI-based insecure MCP project"
+authors = ["Marudhamaran Gunasekaran <maran@practical-devsecops.com>"]
+readme = "README.md"
+packages = [
+    { include = "challenges" }
+]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+fastapi = ">=0.95.0"
+uvicorn = ">=0.21.1"
+httpx = ">=0.24.0"
+mcp = {extras = ["cli"], version = ">=0.5.0"}
+starlette = ">=0.27.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

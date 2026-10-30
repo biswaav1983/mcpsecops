@@ -1,0 +1,34 @@
+services:
+  - docker:dind
+
+stages:
+  - build
+  - test
+  - release
+  - integration
+  - prod
+
+build:
+  stage: build
+  image: python:3.11
+  script:
+    - pip install -r requirements.txt
+    - python -c "import mcp; print('mcp library imported ok')"
+
+sast-bandit:
+  stage: test
+  script:
+    - docker pull hysnsec/bandit
+    - docker run --rm -v $(pwd):/src hysnsec/bandit -r /src -x /src/tests
+
+integration:
+  stage: integration
+  script:
+    - echo "This is an integration step."
+  allow_failure: true
+
+prod:
+  stage: prod
+  script:
+    - echo "This is a deploy step."
+  when: manual
